@@ -20,10 +20,10 @@ app.post('/send-report', async (req, res) => {
     const { pdfUrl, recipientNumber, reportName } = req.body;
 
     // Validate inputs
-    if (!pdfUrl || !recipientNumber) {
+    if (!recipientNumber) {
       return res.status(400).json({
         success: false,
-        error: 'Missing pdfUrl or recipientNumber'
+        error: 'Missing recipientNumber'
       });
     }
 
