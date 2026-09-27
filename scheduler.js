@@ -7,11 +7,6 @@ const CHIRO360_PASSWORD = process.env.CHIRO360_PASSWORD;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER;
 
-// Report kinds to send
-const DAILY_REPORTS = ['visit_log', 'verification'];
-const WEEKLY_REPORTS = ['weekly_claims', 'ar_by_patient', 'new_patients', 'ready_to_bill', 'bills_30_no_eob'];
-const BIWEEKLY_REPORTS = ['provider_suit'];
-
 let authToken = null;
 
 /**
@@ -65,9 +60,6 @@ async function generateAllReports() {
       }
     );
 
-    console.log('📋 Full API Response:', JSON.stringify(response.data, null, 2));
-    
-    // API returns { success: true, data: { generated, stored, emailed } }
     const apiData = response.data.data || response.data;
     
     const generated = apiData.generated || 0;
@@ -82,7 +74,6 @@ async function generateAllReports() {
   } catch (error) {
     console.error('❌ Report generation failed');
     console.error('Status:', error.response?.status);
-    console.error('Data:', JSON.stringify(error.response?.data, null, 2));
     console.error('Message:', error.message);
     return false;
   }
@@ -104,8 +95,6 @@ async function getGeneratedReports() {
       }
     );
 
-    console.log('📋 Reports Response:', JSON.stringify(response.data, null, 2));
-    
     // Handle both response formats: array or { success, data: array }
     let reportsArray = Array.isArray(response.data) 
       ? response.data 
@@ -120,39 +109,38 @@ async function getGeneratedReports() {
   }
 }
 
-// Step 4: Send to WhatsApp (most recent reports only - today's)
-  console.log('---');
-  console.log('📤 Sending reports to WhatsApp...');
-  
-  // Get today's date in ISO format
-  const today = new Date().toISOString().split('T')[0];
-  console.log(`📅 Today's date: ${today}`);
-  
-  // Filter reports from today and take up to 10
-  const recentReports = Array.isArray(reports) 
-    ? reports.filter(r => {
-        const reportDate = r.report_date ? r.report_date.split('T')[0] : '';
-        return reportDate === today;
-      }).slice(0, 10)
-    : [];
+/**
+ * Step 4: Send each report to WhatsApp via webhook
+ */
+async function sendReportToWhatsApp(report) {
+  try {
+    console.log(`📱 Sending to WhatsApp: ${report.title}`);
+    
+    const payload = {
+      pdfUrl: report.download_url,
+      recipientNumber: WHATSAPP_NUMBER,
+      reportName: report.title
+    };
 
-  console.log(`📋 Filtered ${recentReports.length} reports for today`);
+    const response = await axios.post(WEBHOOK_URL, payload, {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
+    });
 
-  if (recentReports.length === 0) {
-    console.log('⚠️  No reports found for today');
-    return;
+    if (response.data.success) {
+      console.log(`✅ WhatsApp sent: ${report.title} (${response.data.messageSid})`);
+      return true;
+    } else {
+      console.error(`❌ WhatsApp send failed: ${response.data.error}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Error sending report: ${error.message}`);
+    return false;
   }
-
-  let sentCount = 0;
-  for (const report of recentReports) {
-    const sent = await sendReportToWhatsApp(report);
-    if (sent) sentCount++;
-    // Small delay between messages to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-
-  console.log('---');
-  console.log(`✅ Automation Complete: ${sentCount}/${recentReports.length} reports sent`);
+}
 
 /**
  * Main orchestration
@@ -186,7 +174,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Wait a bit for S3 upload to complete
+  // Wait for S3 upload
   console.log('⏳ Waiting for S3 upload...');
   await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -197,27 +185,42 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 4: Send to WhatsApp (most recent reports only - today's)
+  // Step 4: Send to WhatsApp
   console.log('---');
   console.log('📤 Sending reports to WhatsApp...');
   
   const today = new Date().toISOString().split('T')[0];
-  const recentReports = reports.filter(r => r.report_date.startsWith(today)).slice(0, 8);
+  console.log(`📅 Today's date: ${today}`);
+  
+  const recentReports = Array.isArray(reports) 
+    ? reports.filter(r => {
+        const reportDate = r.report_date ? r.report_date.split('T')[0] : '';
+        return reportDate === today;
+      }).slice(0, 10)
+    : [];
+
+  console.log(`📋 Filtered ${recentReports.length} reports for today`);
+
+  if (recentReports.length === 0) {
+    console.log('⚠️  No reports found for today');
+    process.exit(0);
+  }
 
   let sentCount = 0;
   for (const report of recentReports) {
     const sent = await sendReportToWhatsApp(report);
     if (sent) sentCount++;
-    // Small delay between messages to avoid rate limiting
+    // Delay between messages
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
   console.log('---');
   console.log(`✅ Automation Complete: ${sentCount}/${recentReports.length} reports sent`);
+  process.exit(0);
 }
 
 // Run it
 main().catch(error => {
-  console.error('Fatal error:', error);
+  console.error('Fatal error:', error.message);
   process.exit(1);
 });
