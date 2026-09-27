@@ -65,13 +65,28 @@ async function generateAllReports() {
       }
     );
 
-    console.log(`✅ Generated: ${response.data.generated} reports`);
-    console.log(`✅ Stored: ${response.data.stored} reports`);
-    console.log(`✅ Emailed: ${response.data.emailed}`);
+    console.log('📋 Full API Response:', JSON.stringify(response.data, null, 2));
     
-    return response.data.generated > 0;
+    // Check if we got the expected data
+    if (!response.data) {
+      console.error('❌ No response data');
+      return false;
+    }
+
+    const generated = response.data.generated || 0;
+    const stored = response.data.stored || 0;
+    const emailed = response.data.emailed || false;
+
+    console.log(`✅ Generated: ${generated} reports`);
+    console.log(`✅ Stored: ${stored} reports`);
+    console.log(`✅ Emailed: ${emailed}`);
+    
+    return generated > 0;
   } catch (error) {
-    console.error('❌ Report generation failed:', error.response?.data || error.message);
+    console.error('❌ Report generation failed');
+    console.error('Status:', error.response?.status);
+    console.error('Data:', JSON.stringify(error.response?.data, null, 2));
+    console.error('Message:', error.message);
     return false;
   }
 }
