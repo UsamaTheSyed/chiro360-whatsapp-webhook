@@ -147,7 +147,9 @@ async function main() {
     process.exit(1);
   }
 
-  const reportsConfig = REPORT_SCHEDULE[RUN_TIME] || REPORT_SCHEDULE['5pm'];
+  // Get reports with bi-weekly logic
+  const reportsConfig = getReportsForTime(RUN_TIME);
+  
   console.log(`📋 Reports to generate for ${RUN_TIME}:`);
   reportsConfig.forEach(r => console.log(`  - ${r.title}`));
   console.log('---');
