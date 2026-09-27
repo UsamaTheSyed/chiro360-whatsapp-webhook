@@ -9,21 +9,51 @@ const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER;
 const RUN_TIME = process.env.RUN_TIME || '5pm';
 
 // Reports for each time
-const REPORT_SCHEDULE = {
-  '4am': [
-    { kind: 'verification', title: 'Insurance Verification Worklist' },
-    { kind: 'ready_to_bill', title: 'Visits Ready to Bill' },
-    { kind: 'active_roster', title: 'Active Patients Roster' }
-  ],
-  '5pm': [
-    { kind: 'visit_log', title: 'Daily Visit & CPT Log' },
-    { kind: 'weekly_claims', title: 'Weekly Claims Submitted' },
-    { kind: 'ar_by_patient', title: 'A/R — Outstanding by Patient' },
-    { kind: 'new_patients', title: 'New Patients This Week' },
-    { kind: 'bills_30_no_eob', title: 'Bills 30+ Days — No EOB' },
-    { kind: 'provider_suit', title: 'Provider Suit — Legal Worklist' }
-  ]
-};
+// Get reports for current time - with bi-weekly logic
+function getReportsForTime(runTime) {
+  const baseSchedule = {
+    '4am': [
+      { kind: 'verification', title: 'Insurance Verification Worklist' },
+      { kind: 'ready_to_bill', title: 'Visits Ready to Bill' },
+      { kind: 'active_roster', title: 'Active Patients Roster' }
+    ],
+    '5pm': [
+      { kind: 'visit_log', title: 'Daily Visit & CPT Log' },
+      { kind: 'weekly_claims', title: 'Weekly Claims Submitted' },
+      { kind: 'ar_by_patient', title: 'A/R — Outstanding by Patient' },
+      { kind: 'new_patients', title: 'New Patients This Week' },
+      { kind: 'bills_30_no_eob', title: 'Bills 30+ Days — No EOB' }
+    ]
+  };
+
+  const reports = baseSchedule[runTime] || baseSchedule['5pm'];
+
+  // Add Provider Suit only on alternating Fridays
+  if (runTime === '5pm') {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    
+    // Check if today is Friday (5)
+    if (dayOfWeek === 5) {
+      // Calculate week number to determine if it's an alternating Friday
+      const startOfYear = new Date(today.getFullYear(), 0, 1);
+      const diff = today - startOfYear;
+      const oneDay = 1000 * 60 * 60 * 24;
+      const dayOfYear = Math.floor(diff / oneDay);
+      const weekNumber = Math.floor(dayOfYear / 7);
+      
+      // Only include Provider Suit on even weeks (alternating)
+      if (weekNumber % 2 === 0) {
+        reports.push({ kind: 'provider_suit', title: 'Provider Suit — Legal Worklist' });
+        console.log(`📋 This is an alternating Friday - including Provider Suit`);
+      } else {
+        console.log(`📋 Skipping Provider Suit (next one is next Friday)`);
+      }
+    }
+  }
+
+  return reports;
+}
 
 let authToken = null;
 
