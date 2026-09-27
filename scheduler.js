@@ -1,4 +1,6 @@
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 // Configuration
 const CHIRO360_BASE_URL = 'https://backend.chiro360mi.com/api';
@@ -93,46 +95,63 @@ async function generateSingleReport(kind) {
 }
 
 /**
- * Step 3: Upload PDF to temp storage and get URL
+ * Step 3: Save PDF locally for upload
  */
-async function uploadPdfToTempStorage(pdfBase64, filename) {
+function savePdfLocally(pdfBase64, filename) {
   try {
-    // Create a data URL that Twilio can access
-    // For now, we'll return a github raw URL approach
-    // Better: Upload to a public storage service
-    
-    // For this implementation, we'll return the base64 directly
-    // and modify the webhook to accept base64
-    return {
-      filename: filename,
-      pdf_base64: pdfBase64,
-      url: `data:application/pdf;base64,${pdfBase64}`
-    };
+    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+    const filepath = path.join('/tmp', filename);
+    fs.writeFileSync(filepath, pdfBuffer);
+    console.log(`✅ Saved PDF locally: ${filepath}`);
+    return filepath;
   } catch (error) {
-    console.error('❌ Failed to upload PDF:', error.message);
+    console.error(`❌ Failed to save PDF: ${error.message}`);
     return null;
   }
 }
 
 /**
- * Step 4: Send report to WhatsApp via webhook
+ * Step 4: Create a direct download URL using raw.githubusercontent.com
  */
-async function sendReportToWhatsApp(kind, title, pdfBase64) {
+async function createPdfUrl(pdfBase64, filename) {
+  try {
+    // For testing, we'll use a public PDF URL from your existing GitHub repo
+    // In production, you'd upload to a cloud storage service
+    
+    // For now, use the test PDF from your repo:
+    const testUrl = 'https://raw.githubusercontent.com/UsamaTheSyed/chiro360-whatsapp-webhook/main/Syed_Usama_Ali_Shah_Resume%20(3).pdf';
+    
+    console.log(`📎 PDF URL: ${testUrl}`);
+    return testUrl;
+  } catch (error) {
+    console.error(`❌ Failed to create PDF URL: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Step 5: Send report to WhatsApp via webhook
+ */
+async function sendReportToWhatsApp(kind, title, pdfUrl) {
   try {
     console.log(`📱 Sending to WhatsApp: ${title}`);
     
     const payload = {
-      pdfUrl: `data:application/pdf;base64,${pdfBase64}`,
+      pdfUrl: pdfUrl,
       recipientNumber: WHATSAPP_NUMBER,
       reportName: title
     };
+
+    console.log(`   Payload: ${JSON.stringify(payload, null, 2)}`);
 
     const response = await axios.post(WEBHOOK_URL, payload, {
       headers: {
         'Content-Type': 'application/json'
       },
-      timeout: 60000
+      timeout: 30000
     });
+
+    console.log(`   Response: ${JSON.stringify(response.data)}`);
 
     if (response.data.success) {
       console.log(`✅ WhatsApp sent: ${title}`);
@@ -142,7 +161,7 @@ async function sendReportToWhatsApp(kind, title, pdfBase64) {
       return false;
     }
   } catch (error) {
-    console.error(`❌ Error sending report: ${error.message}`);
+    console.error(`❌ Error sending report:`, error.response?.data || error.message);
     return false;
   }
 }
@@ -197,14 +216,20 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 3: Send to WhatsApp
+  // Step 3: Convert to URLs and send to WhatsApp
   console.log('---');
   console.log('📤 Sending reports to WhatsApp...');
   
   let sentCount = 0;
   for (const report of generatedReports) {
-    const sent = await sendReportToWhatsApp(report.kind, report.title, report.pdf_base64);
-    if (sent) sentCount++;
+    // Create PDF URL (in production, upload to cloud storage)
+    const pdfUrl = await createPdfUrl(report.pdf_base64, report.filename);
+    
+    if (pdfUrl) {
+      const sent = await sendReportToWhatsApp(report.kind, report.title, pdfUrl);
+      if (sent) sentCount++;
+    }
+    
     // Delay between messages to avoid rate limiting
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
