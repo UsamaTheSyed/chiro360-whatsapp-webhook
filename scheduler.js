@@ -104,46 +104,55 @@ async function getGeneratedReports() {
       }
     );
 
-    console.log(`✅ Found ${response.data.length} reports`);
-    return response.data;
+    console.log('📋 Reports Response:', JSON.stringify(response.data, null, 2));
+    
+    // Handle both response formats: array or { success, data: array }
+    let reportsArray = Array.isArray(response.data) 
+      ? response.data 
+      : (response.data.data || []);
+
+    console.log(`✅ Found ${reportsArray.length} reports`);
+    return reportsArray;
   } catch (error) {
-    console.error('❌ Failed to fetch reports:', error.response?.data || error.message);
+    console.error('❌ Failed to fetch reports:', error.response?.status);
+    console.error('Error:', error.response?.data || error.message);
     return [];
   }
 }
 
-/**
- * Step 4: Send each report to WhatsApp via webhook
- */
-async function sendReportToWhatsApp(report) {
-  try {
-    console.log(`📱 Sending to WhatsApp: ${report.title}`);
-    
-    const payload = {
-      pdfUrl: report.download_url,
-      recipientNumber: WHATSAPP_NUMBER,
-      reportName: report.title
-    };
+// Step 4: Send to WhatsApp (most recent reports only - today's)
+  console.log('---');
+  console.log('📤 Sending reports to WhatsApp...');
+  
+  // Get today's date in ISO format
+  const today = new Date().toISOString().split('T')[0];
+  console.log(`📅 Today's date: ${today}`);
+  
+  // Filter reports from today and take up to 10
+  const recentReports = Array.isArray(reports) 
+    ? reports.filter(r => {
+        const reportDate = r.report_date ? r.report_date.split('T')[0] : '';
+        return reportDate === today;
+      }).slice(0, 10)
+    : [];
 
-    const response = await axios.post(WEBHOOK_URL, payload, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      timeout: 30000
-    });
+  console.log(`📋 Filtered ${recentReports.length} reports for today`);
 
-    if (response.data.success) {
-      console.log(`✅ WhatsApp sent: ${report.title} (${response.data.messageSid})`);
-      return true;
-    } else {
-      console.error(`❌ WhatsApp send failed: ${response.data.error}`);
-      return false;
-    }
-  } catch (error) {
-    console.error(`❌ Error sending report: ${error.message}`);
-    return false;
+  if (recentReports.length === 0) {
+    console.log('⚠️  No reports found for today');
+    return;
   }
-}
+
+  let sentCount = 0;
+  for (const report of recentReports) {
+    const sent = await sendReportToWhatsApp(report);
+    if (sent) sentCount++;
+    // Small delay between messages to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+
+  console.log('---');
+  console.log(`✅ Automation Complete: ${sentCount}/${recentReports.length} reports sent`);
 
 /**
  * Main orchestration
