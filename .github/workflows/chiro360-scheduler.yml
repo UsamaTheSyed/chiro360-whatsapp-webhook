@@ -36,10 +36,21 @@ jobs:
       - name: Install dependencies
         run: npm install
       
+      - name: Determine run time (scheduled)
+        id: schedule
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" = "08" ]; then
+            echo "run_time=4am" >> $GITHUB_OUTPUT
+          else
+            echo "run_time=5pm" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Run Chiro360 Report Automation
         env:
           CHIRO360_EMAIL: ${{ secrets.CHIRO360_EMAIL }}
           CHIRO360_PASSWORD: ${{ secrets.CHIRO360_PASSWORD }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          RUN_TIME: ${{ github.event.inputs.run_time || steps.schedule.outputs.run_time }}
         run: node scheduler.js
