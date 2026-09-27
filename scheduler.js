@@ -1,6 +1,4 @@
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 
 // Configuration
 const CHIRO360_BASE_URL = 'https://backend.chiro360mi.com/api';
@@ -10,7 +8,7 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER;
 const RUN_TIME = process.env.RUN_TIME || '5pm';
 
-// Only generate the specific reports for each time
+// Reports for each time
 const REPORT_SCHEDULE = {
   '4am': [
     { kind: 'verification', title: 'Insurance Verification Worklist' },
@@ -28,9 +26,6 @@ const REPORT_SCHEDULE = {
 
 let authToken = null;
 
-/**
- * Step 1: Login to Chiro360
- */
 async function loginToChiro360() {
   try {
     console.log('🔐 Logging into Chiro360...');
@@ -38,9 +33,7 @@ async function loginToChiro360() {
     const response = await axios.post(`${CHIRO360_BASE_URL}/auth/login`, {
       email: CHIRO360_EMAIL,
       password: CHIRO360_PASSWORD
-    }, {
-      withCredentials: true
-    });
+    }, { withCredentials: true });
 
     const setCookieHeader = response.headers['set-cookie'];
     if (setCookieHeader && Array.isArray(setCookieHeader)) {
@@ -51,7 +44,6 @@ async function loginToChiro360() {
         return true;
       }
     }
-    
     return false;
   } catch (error) {
     console.error('❌ Login failed:', error.message);
@@ -59,20 +51,13 @@ async function loginToChiro360() {
   }
 }
 
-/**
- * Step 2: Generate a single report on demand
- */
 async function generateSingleReport(kind) {
   try {
     console.log(`📄 Generating report: ${kind}...`);
     
     const response = await axios.get(
       `${CHIRO360_BASE_URL}/reports/daily/${kind}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${authToken}`
-        }
-      }
+      { headers: { 'Authorization': `Bearer ${authToken}` } }
     );
 
     const apiData = response.data.data || response.data;
@@ -82,11 +67,9 @@ async function generateSingleReport(kind) {
       return {
         kind: kind,
         filename: apiData.filename,
-        pdf_base64: apiData.pdf_base64,
-        count: apiData.count
+        pdf_base64: apiData.pdf_base64
       };
     }
-    
     return null;
   } catch (error) {
     console.error(`❌ Failed to generate ${kind}:`, error.message);
@@ -94,107 +77,56 @@ async function generateSingleReport(kind) {
   }
 }
 
-/**
- * Step 3: Save PDF locally for upload
- */
-function savePdfLocally(pdfBase64, filename) {
-  try {
-    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
-    const filepath = path.join('/tmp', filename);
-    fs.writeFileSync(filepath, pdfBuffer);
-    console.log(`✅ Saved PDF locally: ${filepath}`);
-    return filepath;
-  } catch (error) {
-    console.error(`❌ Failed to save PDF: ${error.message}`);
-    return null;
-  }
-}
-
-/**
- * Step 4: Create a direct download URL using raw.githubusercontent.com
- */
-async function createPdfUrl(pdfBase64, filename) {
-  try {
-    // For testing, we'll use a public PDF URL from your existing GitHub repo
-    // In production, you'd upload to a cloud storage service
-    
-    // For now, use the test PDF from your repo:
-    const testUrl = 'https://raw.githubusercontent.com/UsamaTheSyed/chiro360-whatsapp-webhook/main/Syed_Usama_Ali_Shah_Resume%20(3).pdf';
-    
-    console.log(`📎 PDF URL: ${testUrl}`);
-    return testUrl;
-  } catch (error) {
-    console.error(`❌ Failed to create PDF URL: ${error.message}`);
-    return null;
-  }
-}
-
-/**
- * Step 5: Send report to WhatsApp via webhook
- */
-async function sendReportToWhatsApp(kind, title, pdfUrl) {
+async function sendReportToWebhook(kind, title, pdfBase64) {
   try {
     console.log(`📱 Sending to WhatsApp: ${title}`);
     
     const payload = {
-      pdfUrl: pdfUrl,
+      pdfBase64: pdfBase64,
       recipientNumber: WHATSAPP_NUMBER,
       reportName: title
     };
 
-    console.log(`   Payload: ${JSON.stringify(payload, null, 2)}`);
-
     const response = await axios.post(WEBHOOK_URL, payload, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      timeout: 30000
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000
     });
 
-    console.log(`   Response: ${JSON.stringify(response.data)}`);
-
     if (response.data.success) {
-      console.log(`✅ WhatsApp sent: ${title}`);
+      console.log(`✅ WhatsApp sent: ${title} (${response.data.messageSid})`);
       return true;
     } else {
       console.error(`❌ WhatsApp send failed: ${response.data.error}`);
       return false;
     }
   } catch (error) {
-    console.error(`❌ Error sending report:`, error.response?.data || error.message);
+    console.error(`❌ Error sending report:`, error.message);
     return false;
   }
 }
 
-/**
- * Main orchestration
- */
 async function main() {
   console.log('🚀 Starting Chiro360 → WhatsApp Report Automation');
   console.log(`⏰ Run Time: ${RUN_TIME.toUpperCase()}`);
   console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
   console.log('---');
 
-  // Validate environment variables
   if (!CHIRO360_EMAIL || !CHIRO360_PASSWORD || !WEBHOOK_URL || !WHATSAPP_NUMBER) {
     console.error('❌ Missing environment variables');
     process.exit(1);
   }
 
-  // Get reports for this time
   const reportsConfig = REPORT_SCHEDULE[RUN_TIME] || REPORT_SCHEDULE['5pm'];
   console.log(`📋 Reports to generate for ${RUN_TIME}:`);
-  reportsConfig.forEach(r => console.log(`  - ${r.title} (${r.kind})`));
+  reportsConfig.forEach(r => console.log(`  - ${r.title}`));
   console.log('---');
 
-  // Step 1: Login
   const loggedIn = await loginToChiro360();
   if (!loggedIn) {
     console.error('❌ Authentication failed. Aborting.');
     process.exit(1);
   }
 
-  // Step 2: Generate only the reports we need
   console.log('---');
   console.log('📊 Generating specific reports...');
   
@@ -207,7 +139,6 @@ async function main() {
         title: reportConfig.title
       });
     }
-    // Small delay between generations
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
@@ -216,21 +147,13 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 3: Convert to URLs and send to WhatsApp
   console.log('---');
   console.log('📤 Sending reports to WhatsApp...');
   
   let sentCount = 0;
   for (const report of generatedReports) {
-    // Create PDF URL (in production, upload to cloud storage)
-    const pdfUrl = await createPdfUrl(report.pdf_base64, report.filename);
-    
-    if (pdfUrl) {
-      const sent = await sendReportToWhatsApp(report.kind, report.title, pdfUrl);
-      if (sent) sentCount++;
-    }
-    
-    // Delay between messages to avoid rate limiting
+    const sent = await sendReportToWebhook(report.kind, report.title, report.pdf_base64);
+    if (sent) sentCount++;
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
@@ -239,7 +162,6 @@ async function main() {
   process.exit(0);
 }
 
-// Run it
 main().catch(error => {
   console.error('Fatal error:', error.message);
   process.exit(1);
