@@ -8,14 +8,20 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER;
 const RUN_TIME = process.env.RUN_TIME || '5pm';
 
-// Report mapping by schedule time
+// Only generate the specific reports for each time
 const REPORT_SCHEDULE = {
-  '4am': {
-    kinds: ['verification', 'ready_to_bill']
-  },
-  '5pm': {
-    kinds: ['visit_log', 'weekly_claims', 'ar_by_patient', 'new_patients', 'bills_30_no_eob', 'provider_suit']
-  }
+  '4am': [
+    { kind: 'verification', title: 'Insurance Verification Worklist' },
+    { kind: 'ready_to_bill', title: 'Visits Ready to Bill' }
+  ],
+  '5pm': [
+    { kind: 'visit_log', title: 'Daily Visit & CPT Log' },
+    { kind: 'weekly_claims', title: 'Weekly Claims Submitted' },
+    { kind: 'ar_by_patient', title: 'A/R — Outstanding by Patient' },
+    { kind: 'new_patients', title: 'New Patients This Week' },
+    { kind: 'bills_30_no_eob', title: 'Bills 30+ Days — No EOB' },
+    { kind: 'provider_suit', title: 'Provider Suit — Legal Worklist' }
+  ]
 };
 
 let authToken = null;
@@ -46,52 +52,20 @@ async function loginToChiro360() {
     
     return false;
   } catch (error) {
-    console.error('❌ Login failed:', error.response?.data || error.message);
+    console.error('❌ Login failed:', error.message);
     return false;
   }
 }
 
 /**
- * Step 2: Generate all reports
+ * Step 2: Generate a single report on demand
  */
-async function generateAllReports() {
+async function generateSingleReport(kind) {
   try {
-    console.log('📊 Generating all reports...');
-    
-    const response = await axios.post(
-      `${CHIRO360_BASE_URL}/reports/daily/run`,
-      {},
-      {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const apiData = response.data.data || response.data;
-    const generated = apiData.generated || 0;
-    const stored = apiData.stored || 0;
-
-    console.log(`✅ Generated: ${generated} reports`);
-    console.log(`✅ Stored: ${stored} reports`);
-    
-    return generated > 0;
-  } catch (error) {
-    console.error('❌ Report generation failed:', error.message);
-    return false;
-  }
-}
-
-/**
- * Step 3: Get generated reports with download URLs
- */
-async function getGeneratedReports() {
-  try {
-    console.log('📥 Fetching generated reports...');
+    console.log(`📄 Generating report: ${kind}...`);
     
     const response = await axios.get(
-      `${CHIRO360_BASE_URL}/reports/generated`,
+      `${CHIRO360_BASE_URL}/reports/daily/${kind}`,
       {
         headers: {
           'Authorization': `Bearer ${authToken}`
@@ -99,63 +73,69 @@ async function getGeneratedReports() {
       }
     );
 
-    let reportsArray = Array.isArray(response.data) 
-      ? response.data 
-      : (response.data.data || []);
-
-    console.log(`✅ Found ${reportsArray.length} total reports`);
-    return reportsArray;
+    const apiData = response.data.data || response.data;
+    
+    if (apiData.pdf_base64) {
+      console.log(`✅ Generated ${kind}: ${apiData.filename}`);
+      return {
+        kind: kind,
+        filename: apiData.filename,
+        pdf_base64: apiData.pdf_base64,
+        count: apiData.count
+      };
+    }
+    
+    return null;
   } catch (error) {
-    console.error('❌ Failed to fetch reports:', error.message);
-    return [];
+    console.error(`❌ Failed to generate ${kind}:`, error.message);
+    return null;
   }
 }
 
 /**
- * Filter reports by kind for current run time
+ * Step 3: Upload PDF to temp storage and get URL
  */
-function filterReportsForTime(reports, time) {
-  const config = REPORT_SCHEDULE[time] || REPORT_SCHEDULE['5pm'];
-  const allowedKinds = config.kinds;
-  
-  console.log(`🕐 ${time.toUpperCase()} reports allowed: ${allowedKinds.join(', ')}`);
-  
-  const filtered = reports.filter(report => {
-    const isAllowed = allowedKinds.includes(report.kind);
-    if (isAllowed) {
-      console.log(`  ✅ Include: ${report.title} (${report.kind})`);
-    } else {
-      console.log(`  ❌ Exclude: ${report.title} (${report.kind})`);
-    }
-    return isAllowed;
-  });
-  
-  console.log(`📋 Filtered to ${filtered.length} reports for ${time}`);
-  return filtered;
+async function uploadPdfToTempStorage(pdfBase64, filename) {
+  try {
+    // Create a data URL that Twilio can access
+    // For now, we'll return a github raw URL approach
+    // Better: Upload to a public storage service
+    
+    // For this implementation, we'll return the base64 directly
+    // and modify the webhook to accept base64
+    return {
+      filename: filename,
+      pdf_base64: pdfBase64,
+      url: `data:application/pdf;base64,${pdfBase64}`
+    };
+  } catch (error) {
+    console.error('❌ Failed to upload PDF:', error.message);
+    return null;
+  }
 }
 
 /**
- * Step 4: Send each report to WhatsApp via webhook
+ * Step 4: Send report to WhatsApp via webhook
  */
-async function sendReportToWhatsApp(report) {
+async function sendReportToWhatsApp(kind, title, pdfBase64) {
   try {
-    console.log(`📱 Sending to WhatsApp: ${report.title}`);
+    console.log(`📱 Sending to WhatsApp: ${title}`);
     
     const payload = {
-      pdfUrl: report.download_url,
+      pdfUrl: `data:application/pdf;base64,${pdfBase64}`,
       recipientNumber: WHATSAPP_NUMBER,
-      reportName: report.title
+      reportName: title
     };
 
     const response = await axios.post(WEBHOOK_URL, payload, {
       headers: {
         'Content-Type': 'application/json'
       },
-      timeout: 30000
+      timeout: 60000
     });
 
     if (response.data.success) {
-      console.log(`✅ WhatsApp sent: ${report.title}`);
+      console.log(`✅ WhatsApp sent: ${title}`);
       return true;
     } else {
       console.error(`❌ WhatsApp send failed: ${response.data.error}`);
@@ -182,6 +162,12 @@ async function main() {
     process.exit(1);
   }
 
+  // Get reports for this time
+  const reportsConfig = REPORT_SCHEDULE[RUN_TIME] || REPORT_SCHEDULE['5pm'];
+  console.log(`📋 Reports to generate for ${RUN_TIME}:`);
+  reportsConfig.forEach(r => console.log(`  - ${r.title} (${r.kind})`));
+  console.log('---');
+
   // Step 1: Login
   const loggedIn = await loginToChiro360();
   if (!loggedIn) {
@@ -189,59 +175,42 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 2: Generate reports
-  const generated = await generateAllReports();
-  if (!generated) {
-    console.error('❌ Report generation failed. Aborting.');
-    process.exit(1);
-  }
-
-  // Wait for S3 upload
-  console.log('⏳ Waiting for S3 upload...');
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // Step 3: Fetch reports
-  const allReports = await getGeneratedReports();
-  if (allReports.length === 0) {
-    console.error('❌ No reports found. Aborting.');
-    process.exit(1);
-  }
-
-  // Step 4: Filter by today's date
-  const today = new Date().toISOString().split('T')[0];
-  console.log(`📅 Today's date: ${today}`);
-  
-  const todaysReports = allReports.filter(r => {
-    if (!r.report_date) return false;
-    const reportDate = r.report_date.split('T')[0];
-    return reportDate === today;
-  });
-
-  console.log(`📋 Today's reports: ${todaysReports.length}`);
-
-  // Step 5: Filter by report kind for this time
+  // Step 2: Generate only the reports we need
   console.log('---');
-  console.log('🔍 Filtering by report kind...');
-  const reportsToSend = filterReportsForTime(todaysReports, RUN_TIME);
-
-  if (reportsToSend.length === 0) {
-    console.log(`⚠️  No ${RUN_TIME} reports found for today`);
-    process.exit(0);
+  console.log('📊 Generating specific reports...');
+  
+  const generatedReports = [];
+  for (const reportConfig of reportsConfig) {
+    const report = await generateSingleReport(reportConfig.kind);
+    if (report) {
+      generatedReports.push({
+        ...report,
+        title: reportConfig.title
+      });
+    }
+    // Small delay between generations
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  // Step 6: Send to WhatsApp
+  if (generatedReports.length === 0) {
+    console.error('❌ No reports generated. Aborting.');
+    process.exit(1);
+  }
+
+  // Step 3: Send to WhatsApp
   console.log('---');
   console.log('📤 Sending reports to WhatsApp...');
   
   let sentCount = 0;
-  for (const report of reportsToSend) {
-    const sent = await sendReportToWhatsApp(report);
+  for (const report of generatedReports) {
+    const sent = await sendReportToWhatsApp(report.kind, report.title, report.pdf_base64);
     if (sent) sentCount++;
+    // Delay between messages to avoid rate limiting
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
   console.log('---');
-  console.log(`✅ Complete: ${sentCount}/${reportsToSend.length} ${RUN_TIME} reports sent`);
+  console.log(`✅ Complete: ${sentCount}/${generatedReports.length} ${RUN_TIME} reports sent`);
   process.exit(0);
 }
 
