@@ -35,12 +35,19 @@ app.post('/send-report', async (req, res) => {
     console.log(`Sending to: ${toNumber}`);
 
     // Send WhatsApp message with PDF
-    const message = await client.messages.create({
+    // Send WhatsApp message with PDF (if provided)
+    const messageData = {
       from: TWILIO_WHATSAPP_NUMBER,
       to: toNumber,
-      mediaUrl: pdfUrl,
       body: `📋 Your report is ready: ${reportName || 'Report'}`
-    });
+    };
+    
+    // Only add mediaUrl if pdfUrl is provided
+    if (pdfUrl && pdfUrl.trim()) {
+      messageData.mediaUrl = pdfUrl;
+    }
+    
+    const message = await client.messages.create(messageData);
 
     console.log(`✅ Message sent successfully: ${message.sid}`);
 
