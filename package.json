@@ -1,6 +1,7 @@
 {
   "name": "chiro360-whatsapp-webhook",
   "version": "1.0.0",
+  "description": "Chiro360 Reports to WhatsApp via Twilio",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -8,6 +9,6 @@
   "dependencies": {
     "express": "4.17.1",
     "twilio": "3.77.0",
-    "axios": "^1.6.0"
+    "axios": "1.6.0"
   }
 }
