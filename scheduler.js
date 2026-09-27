@@ -8,15 +8,13 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER;
 const RUN_TIME = process.env.RUN_TIME || '5pm';
 
-// Report configurations by time
+// Report mapping by schedule time
 const REPORT_SCHEDULE = {
   '4am': {
-    names: ['Insurance Verification', 'Visits Ready to Bill', 'Active Patients Roster'],
-    kinds: ['verification', 'ready_to_bill', 'active_roster']
+    kinds: ['verification', 'ready_to_bill']
   },
   '5pm': {
-    names: ['Visit & CPT Log', 'Patients Seen Today', 'Weekly Claims Submitted', 'A/R Outstanding by Patient', 'New Patients This Week', 'Bills 30+ Days - No EOB'],
-    kinds: ['visit_log', 'patients_seen', 'weekly_claims', 'ar_by_patient', 'new_patients', 'bills_30_no_eob']
+    kinds: ['visit_log', 'weekly_claims', 'ar_by_patient', 'new_patients', 'bills_30_no_eob', 'provider_suit']
   }
 };
 
@@ -114,19 +112,25 @@ async function getGeneratedReports() {
 }
 
 /**
- * Filter reports for current run time
+ * Filter reports by kind for current run time
  */
 function filterReportsForTime(reports, time) {
   const config = REPORT_SCHEDULE[time] || REPORT_SCHEDULE['5pm'];
-  const reportNames = config.names;
+  const allowedKinds = config.kinds;
   
-  console.log(`🕐 Filtering for ${time} reports: ${reportNames.join(', ')}`);
+  console.log(`🕐 ${time.toUpperCase()} reports allowed: ${allowedKinds.join(', ')}`);
   
-  const filtered = reports.filter(report => 
-    reportNames.some(name => report.title.includes(name))
-  );
+  const filtered = reports.filter(report => {
+    const isAllowed = allowedKinds.includes(report.kind);
+    if (isAllowed) {
+      console.log(`  ✅ Include: ${report.title} (${report.kind})`);
+    } else {
+      console.log(`  ❌ Exclude: ${report.title} (${report.kind})`);
+    }
+    return isAllowed;
+  });
   
-  console.log(`📋 After filtering: ${filtered.length} reports for ${time}`);
+  console.log(`📋 Filtered to ${filtered.length} reports for ${time}`);
   return filtered;
 }
 
@@ -203,12 +207,21 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 4: Filter reports for this time
+  // Step 4: Filter by today's date
   const today = new Date().toISOString().split('T')[0];
-  const todaysReports = allReports.filter(r => 
-    r.report_date ? r.report_date.split('T')[0] === today : false
-  );
+  console.log(`📅 Today's date: ${today}`);
+  
+  const todaysReports = allReports.filter(r => {
+    if (!r.report_date) return false;
+    const reportDate = r.report_date.split('T')[0];
+    return reportDate === today;
+  });
 
+  console.log(`📋 Today's reports: ${todaysReports.length}`);
+
+  // Step 5: Filter by report kind for this time
+  console.log('---');
+  console.log('🔍 Filtering by report kind...');
   const reportsToSend = filterReportsForTime(todaysReports, RUN_TIME);
 
   if (reportsToSend.length === 0) {
@@ -216,7 +229,7 @@ async function main() {
     process.exit(0);
   }
 
-  // Step 5: Send to WhatsApp
+  // Step 6: Send to WhatsApp
   console.log('---');
   console.log('📤 Sending reports to WhatsApp...');
   
