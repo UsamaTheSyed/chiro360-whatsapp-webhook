@@ -12,7 +12,8 @@ const RUN_TIME = process.env.RUN_TIME || '5pm';
 const REPORT_SCHEDULE = {
   '4am': [
     { kind: 'verification', title: 'Insurance Verification Worklist' },
-    { kind: 'ready_to_bill', title: 'Visits Ready to Bill' }
+    { kind: 'ready_to_bill', title: 'Visits Ready to Bill' },
+    { kind: 'active_roster', title: 'Active Patients Roster' }
   ],
   '5pm': [
     { kind: 'visit_log', title: 'Daily Visit & CPT Log' },
