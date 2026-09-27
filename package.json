@@ -1,17 +1,12 @@
 {
   "name": "chiro360-whatsapp-webhook",
   "version": "1.0.0",
-  "description": "Send Chiro360 reports via WhatsApp using Twilio",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": ["chiro360", "whatsapp", "twilio", "webhook"],
   "dependencies": {
-    "express": "4.18.2",
-    "twilio": "3.98.0"
-  },
-  "engines": {
-    "node": "18"
+    "express": "4.17.1",
+    "twilio": "3.77.0"
   }
 }
