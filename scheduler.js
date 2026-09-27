@@ -67,15 +67,12 @@ async function generateAllReports() {
 
     console.log('📋 Full API Response:', JSON.stringify(response.data, null, 2));
     
-    // Check if we got the expected data
-    if (!response.data) {
-      console.error('❌ No response data');
-      return false;
-    }
-
-    const generated = response.data.generated || 0;
-    const stored = response.data.stored || 0;
-    const emailed = response.data.emailed || false;
+    // API returns { success: true, data: { generated, stored, emailed } }
+    const apiData = response.data.data || response.data;
+    
+    const generated = apiData.generated || 0;
+    const stored = apiData.stored || 0;
+    const emailed = apiData.emailed || false;
 
     console.log(`✅ Generated: ${generated} reports`);
     console.log(`✅ Stored: ${stored} reports`);
