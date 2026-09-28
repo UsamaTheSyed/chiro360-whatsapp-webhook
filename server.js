@@ -54,7 +54,7 @@ app.post('/send-report', async (req, res) => {
 
     // Send WhatsApp message with PDF
     const message = await client.messages.create({
-      messagingServiceSid: 'MG0404c5a318bde7f214979ac64f6333d9',
+      from: 'whatsapp:+12283355862',
       to: toNumber,
       mediaUrl: finalPdfUrl,
       body: `📋 Your report is ready: ${reportName || 'Report'}`
