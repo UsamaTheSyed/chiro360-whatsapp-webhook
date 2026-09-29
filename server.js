@@ -1,7 +1,4 @@
 const express = require('express');
-const twilio = require('twilio');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -10,66 +7,92 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Store PDFs in memory (cleared when server restarts)
 const storedPdfs = {};
 
-// Your Twilio credentials
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER;
-
-const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+// Meta WhatsApp Cloud API credentials (set these in Render env vars)
+const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+const META_PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+const META_API_VERSION = 'v21.0';
+const META_API_URL = `https://graph.facebook.com/${META_API_VERSION}/${META_PHONE_NUMBER_ID}/messages`;
 
 // Webhook endpoint that accepts base64 PDFs
 app.post('/send-report', async (req, res) => {
   try {
-    const { pdfUrl, pdfBase64, recipientNumber, reportName } = req.body;
+    const { pdfUrl, pdfBase64, recipientNumber, reportName, message } = req.body;
 
-    // Handle two cases: URL or base64
     let finalPdfUrl = pdfUrl;
 
     if (pdfBase64) {
-      // Generate unique ID for this PDF
       const pdfId = `report-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
-      // Store base64 in memory
       storedPdfs[pdfId] = pdfBase64;
-      
-      // Create a download URL on this server
       finalPdfUrl = `https://${req.hostname}/download-pdf/${pdfId}`;
-      
-      console.log(`📁 Stored PDF temporarily: ${pdfId}`);
-      console.log(`📎 Download URL: ${finalPdfUrl}`);
+      console.log(`Stored PDF temporarily: ${pdfId}`);
+      console.log(`Download URL: ${finalPdfUrl}`);
     }
 
-    if (!finalPdfUrl || !recipientNumber) {
+    if (!recipientNumber) {
       return res.status(400).json({
         success: false,
-        error: 'Missing pdfUrl/pdfBase64 or recipientNumber'
+        error: 'Missing recipientNumber'
       });
     }
 
-    const toNumber = recipientNumber.startsWith('whatsapp:') 
-      ? recipientNumber 
-      : `whatsapp:${recipientNumber}`;
+    // Meta API wants the number WITHOUT "whatsapp:" prefix and without "+"
+    const toNumber = recipientNumber.replace('whatsapp:', '').replace('+', '');
 
     console.log(`Sending to: ${toNumber}`);
 
-    // Send WhatsApp message with PDF
-    const message = await client.messages.create({
-      from: 'whatsapp:+14155238886',
-      to: toNumber,
-      mediaUrl: finalPdfUrl,
-      body: `📋 Your report is ready: ${reportName || 'Report'}`
+    let payload;
+
+    if (finalPdfUrl) {
+      payload = {
+        messaging_product: 'whatsapp',
+        to: toNumber,
+        type: 'document',
+        document: {
+          link: finalPdfUrl,
+          filename: `${reportName || 'Report'}.pdf`,
+          caption: `Your report is ready: ${reportName || 'Report'}`
+        }
+      };
+    } else {
+      payload = {
+        messaging_product: 'whatsapp',
+        to: toNumber,
+        type: 'text',
+        text: { body: message || `${reportName || 'Notification'}` }
+      };
+    }
+
+    const response = await fetch(META_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${META_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
     });
 
-    console.log(`✅ Message sent successfully: ${message.sid}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('Meta API error:', JSON.stringify(data));
+      return res.status(500).json({
+        success: false,
+        error: data.error ? data.error.message : 'Unknown Meta API error',
+        details: data
+      });
+    }
+
+    const messageId = data.messages && data.messages[0] ? data.messages[0].id : null;
+    console.log(`Message sent successfully: ${messageId}`);
 
     res.json({
       success: true,
-      messageSid: message.sid,
+      messageId,
       message: 'Report sent to WhatsApp successfully'
     });
 
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('Error:', error.message);
     res.status(500).json({
       success: false,
       error: error.message
@@ -93,13 +116,12 @@ app.get('/download-pdf/:pdfId', (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${pdfId}.pdf"`);
     res.send(pdfBuffer);
 
-    console.log(`📥 PDF downloaded: ${pdfId}`);
+    console.log(`PDF downloaded: ${pdfId}`);
 
-    // Clean up after download (optional - keeps memory clean)
     setTimeout(() => {
       delete storedPdfs[pdfId];
-      console.log(`🗑️  PDF deleted: ${pdfId}`);
-    }, 5000); // Delete after 5 seconds
+      console.log(`PDF deleted: ${pdfId}`);
+    }, 5000);
 
   } catch (error) {
     console.error('Error serving PDF:', error);
@@ -119,9 +141,9 @@ app.get('/health', (req, res) => {
 // Home page
 app.get('/', (req, res) => {
   res.json({
-    message: 'Chiro360 WhatsApp Webhook Server',
+    message: 'Chiro360 WhatsApp Webhook Server (Meta Cloud API)',
     endpoints: {
-      '/send-report': 'POST - Send report with pdfUrl OR pdfBase64',
+      '/send-report': 'POST - Send report with pdfUrl OR pdfBase64, or plain text via message field',
       '/download-pdf/:pdfId': 'GET - Download stored PDF',
       '/health': 'GET - Health check'
     }
@@ -130,5 +152,5 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
