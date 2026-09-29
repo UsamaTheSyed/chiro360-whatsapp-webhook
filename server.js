@@ -129,6 +129,31 @@ app.get('/download-pdf/:pdfId', (req, res) => {
   }
 });
 
+// Webhook verification (Meta calls this once when you click "Verify and save")
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
+
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === META_VERIFY_TOKEN) {
+    console.log('Webhook verified successfully');
+    res.status(200).send(challenge);
+  } else {
+    console.log('Webhook verification failed - token mismatch');
+    res.sendStatus(403);
+  }
+});
+
+// Webhook events (Meta calls this for incoming messages, delivery/read status, etc.)
+app.post('/webhook', (req, res) => {
+  console.log('Webhook event received:', JSON.stringify(req.body, null, 2));
+  // Just acknowledge for now - we can add logic here later if needed
+  // (e.g. detecting when someone joins so we know they can receive messages)
+  res.sendStatus(200);
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({
