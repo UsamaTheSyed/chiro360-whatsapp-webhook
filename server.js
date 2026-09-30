@@ -1,4 +1,5 @@
 const express = require('express');
+const twilio = require('twilio');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -7,16 +8,16 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Store PDFs in memory (cleared when server restarts)
 const storedPdfs = {};
 
-// Meta WhatsApp Cloud API credentials (set these in Render env vars)
-const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
-const META_PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
-const META_API_VERSION = 'v21.0';
-const META_API_URL = `https://graph.facebook.com/${META_API_VERSION}/${META_PHONE_NUMBER_ID}/messages`;
+// Your Twilio credentials
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER; // e.g. whatsapp:+12283355862
 
-// Webhook endpoint that accepts base64 PDFs
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
 app.post('/send-report', async (req, res) => {
   try {
-    const { pdfUrl, pdfBase64, recipientNumber, reportName, message } = req.body;
+    const { pdfUrl, pdfBase64, recipientNumber, reportName } = req.body;
 
     let finalPdfUrl = pdfUrl;
 
@@ -28,66 +29,32 @@ app.post('/send-report', async (req, res) => {
       console.log(`Download URL: ${finalPdfUrl}`);
     }
 
-    if (!recipientNumber) {
+    if (!finalPdfUrl || !recipientNumber) {
       return res.status(400).json({
         success: false,
-        error: 'Missing recipientNumber'
+        error: 'Missing pdfUrl/pdfBase64 or recipientNumber'
       });
     }
 
-    // Meta API wants the number WITHOUT "whatsapp:" prefix and without "+"
-    const toNumber = recipientNumber.replace('whatsapp:', '').replace('+', '');
+    const toNumber = recipientNumber.startsWith('whatsapp:')
+      ? recipientNumber
+      : `whatsapp:${recipientNumber}`;
 
     console.log(`Sending to: ${toNumber}`);
+    console.log(`Sending from: ${TWILIO_WHATSAPP_NUMBER}`);
 
-    let payload;
-
-    if (finalPdfUrl) {
-      payload = {
-        messaging_product: 'whatsapp',
-        to: toNumber,
-        type: 'document',
-        document: {
-          link: finalPdfUrl,
-          filename: `${reportName || 'Report'}.pdf`,
-          caption: `Your report is ready: ${reportName || 'Report'}`
-        }
-      };
-    } else {
-      payload = {
-        messaging_product: 'whatsapp',
-        to: toNumber,
-        type: 'text',
-        text: { body: message || `${reportName || 'Notification'}` }
-      };
-    }
-
-    const response = await fetch(META_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${META_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
+    const message = await client.messages.create({
+      from: TWILIO_WHATSAPP_NUMBER,
+      to: toNumber,
+      mediaUrl: finalPdfUrl,
+      body: `Your report is ready: ${reportName || 'Report'}`
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Meta API error:', JSON.stringify(data));
-      return res.status(500).json({
-        success: false,
-        error: data.error ? data.error.message : 'Unknown Meta API error',
-        details: data
-      });
-    }
-
-    const messageId = data.messages && data.messages[0] ? data.messages[0].id : null;
-    console.log(`Message sent successfully: ${messageId}`);
+    console.log(`Message sent successfully: ${message.sid}`);
 
     res.json({
       success: true,
-      messageId,
+      messageSid: message.sid,
       message: 'Report sent to WhatsApp successfully'
     });
 
@@ -100,7 +67,6 @@ app.post('/send-report', async (req, res) => {
   }
 });
 
-// Endpoint to download stored PDFs
 app.get('/download-pdf/:pdfId', (req, res) => {
   try {
     const { pdfId } = req.params;
@@ -129,32 +95,6 @@ app.get('/download-pdf/:pdfId', (req, res) => {
   }
 });
 
-// Webhook verification (Meta calls this once when you click "Verify and save")
-const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
-
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === META_VERIFY_TOKEN) {
-    console.log('Webhook verified successfully');
-    res.status(200).send(challenge);
-  } else {
-    console.log('Webhook verification failed - token mismatch');
-    res.sendStatus(403);
-  }
-});
-
-// Webhook events (Meta calls this for incoming messages, delivery/read status, etc.)
-app.post('/webhook', (req, res) => {
-  console.log('Webhook event received:', JSON.stringify(req.body, null, 2));
-  // Just acknowledge for now - we can add logic here later if needed
-  // (e.g. detecting when someone joins so we know they can receive messages)
-  res.sendStatus(200);
-});
-
-// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'Server running',
@@ -163,12 +103,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Home page
 app.get('/', (req, res) => {
   res.json({
-    message: 'Chiro360 WhatsApp Webhook Server (Meta Cloud API)',
+    message: 'Chiro360 WhatsApp Webhook Server (Twilio)',
     endpoints: {
-      '/send-report': 'POST - Send report with pdfUrl OR pdfBase64, or plain text via message field',
+      '/send-report': 'POST - Send report with pdfUrl OR pdfBase64',
       '/download-pdf/:pdfId': 'GET - Download stored PDF',
       '/health': 'GET - Health check'
     }
