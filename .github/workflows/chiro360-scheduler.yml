@@ -48,9 +48,14 @@ jobs:
       
       - name: Run Chiro360 Report Automation
         env:
-          CHIRO360_EMAIL: ${{ secrets.CHIRO360_EMAIL }}
-          CHIRO360_PASSWORD: ${{ secrets.CHIRO360_PASSWORD }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           RUN_TIME: ${{ github.event.inputs.run_time || steps.schedule.outputs.run_time }}
+
+          CHIRO360MI_EMAIL: ${{ secrets.CHIRO360MI_EMAIL }}
+          CHIRO360MI_PASSWORD: ${{ secrets.CHIRO360MI_PASSWORD }}
+          CHIRO360MI_WHATSAPP_NUMBER: ${{ secrets.CHIRO360MI_WHATSAPP_NUMBER }}
+
+          FINISHLINEPTMI_EMAIL: ${{ secrets.FINISHLINEPTMI_EMAIL }}
+          FINISHLINEPTMI_PASSWORD: ${{ secrets.FINISHLINEPTMI_PASSWORD }}
+          FINISHLINEPTMI_WHATSAPP_NUMBER: ${{ secrets.FINISHLINEPTMI_WHATSAPP_NUMBER }}
         run: node scheduler.js
