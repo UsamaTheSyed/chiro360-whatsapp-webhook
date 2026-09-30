@@ -1,230 +1,189 @@
 const axios = require('axios');
 
-// Configuration
-const CHIRO360_BASE_URL = 'https://backend.chiro360mi.com/api';
-const CHIRO360_EMAIL = process.env.CHIRO360_EMAIL;
-const CHIRO360_PASSWORD = process.env.CHIRO360_PASSWORD;
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER;
-const RUN_TIME = process.env.RUN_TIME || '5pm';
+// ============================================================
+// CLIENT CONFIG — add one object per Chiro360 practice here.
+// Each client needs its own set of GitHub Secrets (see bottom
+// of this file for the full list of secret names expected).
+// ============================================================
+const CLIENTS = [
+  {
+    name: 'chiro360mi',
+    apiBaseUrl: 'https://backend.chiro360mi.com/api',
+    email: process.env.CHIRO360MI_EMAIL,
+    password: process.env.CHIRO360MI_PASSWORD,
+    whatsappNumber: process.env.CHIRO360MI_WHATSAPP_NUMBER
+  },
+  {
+    name: 'finishlineptmi',
+    // Confirmed via browser Network tab — this client's API lives directly
+    // on the portal domain (no "backend." subdomain, unlike chiro360mi).
+    apiBaseUrl: 'https://finishlineptmi.chiro360mi.com/api',
+    email: process.env.FINISHLINEPTMI_EMAIL,
+    password: process.env.FINISHLINEPTMI_PASSWORD,
+    whatsappNumber: process.env.FINISHLINEPTMI_WHATSAPP_NUMBER
+  }
+];
 
-let authToken = null;
+const WEBHOOK_URL = process.env.WEBHOOK_URL; // shared across all clients
+const RUN_TIME = process.env.RUN_TIME; // '4am' or '5pm', passed from workflow
 
-/**
- * Get reports for current time with bi-weekly logic
- */
+// ============================================================
+// Report schedule — same for every client unless told otherwise
+// ============================================================
 function getReportsForTime(runTime) {
-  const baseSchedule = {
-    '4am': [
-      { kind: 'verification', title: 'Insurance Verification Worklist' },
-      { kind: 'ready_to_bill', title: 'Visits Ready to Bill' }
-    ],
-    '5pm': [
-      { kind: 'visit_log', title: 'Daily Visit & CPT Log' },
-      { kind: 'weekly_claims', title: 'Weekly Claims Submitted' },
-      { kind: 'ar_by_patient', title: 'A/R — Outstanding by Patient' },
-      { kind: 'new_patients', title: 'New Patients This Week' },
-      { kind: 'bills_30_no_eob', title: 'Bills 30+ Days — No EOB' }
-    ]
-  };
+  if (runTime === '4am') {
+    return [
+      { kind: 'verification', label: 'Insurance Verification Worklist' },
+      { kind: 'ready_to_bill', label: 'Visits Ready to Bill' }
+    ];
+  }
 
-  const reports = baseSchedule[runTime] || baseSchedule['5pm'];
+  // 5pm reports
+  const reports = [
+    { kind: 'visit_log', label: 'Daily Visit & CPT Log' },
+    { kind: 'weekly_claims', label: 'Weekly Claims Submitted' },
+    { kind: 'ar_by_patient', label: 'A/R — Outstanding by Patient' },
+    { kind: 'new_patients', label: 'New Patients This Week' },
+    { kind: 'bills_30_no_eob', label: 'Bills 30+ Days — No EOB' }
+  ];
 
-  // Add Provider Suit only on alternating Fridays
-  if (runTime === '5pm') {
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    
-    // Check if today is Friday (5)
-    if (dayOfWeek === 5) {
-      // Calculate week number from start of year
-      const startOfYear = new Date(today.getFullYear(), 0, 1);
-      const diff = today - startOfYear;
-      const oneDay = 1000 * 60 * 60 * 24;
-      const dayOfYear = Math.floor(diff / oneDay);
-      const weekNumber = Math.floor(dayOfYear / 7);
-      
-      // Only include Provider Suit on even weeks (alternating)
-      if (weekNumber % 2 === 0) {
-        reports.push({ kind: 'provider_suit', title: 'Provider Suit — Legal Worklist' });
-        console.log(`📋 Alternating Friday (Week ${weekNumber}) - Including Provider Suit`);
-      } else {
-        console.log(`📋 Regular Friday (Week ${weekNumber}) - Skipping Provider Suit`);
-      }
-    }
+  // Provider Suit — every other Friday only
+  const now = new Date();
+  const weekNumber = Math.floor(now.getTime() / (7 * 24 * 60 * 60 * 1000));
+  const isFriday = now.getUTCDay() === 5;
+  const isEvenWeek = weekNumber % 2 === 0;
+
+  if (isFriday && isEvenWeek) {
+    reports.push({ kind: 'provider_suit', label: 'Provider Suit — Legal Worklist' });
   }
 
   return reports;
 }
 
-/**
- * Step 1: Login to Chiro360
- */
-async function loginToChiro360() {
+// ============================================================
+// Per-client login
+// ============================================================
+async function login(client) {
+  const response = await axios.post(`${client.apiBaseUrl}/auth/login`, {
+    email: client.email,
+    password: client.password
+  }, {
+    withCredentials: true
+  });
+
+  // JWT comes back via Set-Cookie: access_token=<JWT>
+  const setCookie = response.headers['set-cookie'];
+  if (!setCookie) {
+    throw new Error(`[${client.name}] Login did not return a Set-Cookie header`);
+  }
+
+  const tokenCookie = setCookie.find(c => c.startsWith('access_token='));
+  if (!tokenCookie) {
+    throw new Error(`[${client.name}] No access_token cookie found in login response`);
+  }
+
+  const token = tokenCookie.split('access_token=')[1].split(';')[0];
+  return token;
+}
+
+// ============================================================
+// Generate one report (base64 PDF)
+// ============================================================
+async function generateReport(client, token, kind) {
+  const response = await axios.get(`${client.apiBaseUrl}/reports/daily/${kind}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  const data = response.data.data || response.data;
+  return data; // expected shape: { filename, pdf_base64, count }
+}
+
+// ============================================================
+// Send one report to the webhook
+// ============================================================
+async function sendToWhatsApp(client, report, label) {
   try {
-    console.log('🔐 Logging into Chiro360...');
-    
-    const response = await axios.post(`${CHIRO360_BASE_URL}/auth/login`, {
-      email: CHIRO360_EMAIL,
-      password: CHIRO360_PASSWORD
-    }, {
-      withCredentials: true
+    const response = await axios.post(WEBHOOK_URL, {
+      pdfBase64: report.pdf_base64,
+      recipientNumber: client.whatsappNumber,
+      reportName: `${client.name} — ${label}`
     });
 
-    const setCookieHeader = response.headers['set-cookie'];
-    if (setCookieHeader && Array.isArray(setCookieHeader)) {
-      const tokenCookie = setCookieHeader.find(cookie => cookie.includes('access_token='));
-      if (tokenCookie) {
-        authToken = tokenCookie.split('access_token=')[1].split(';')[0];
-        console.log('✅ Successfully logged in');
-        return true;
-      }
-    }
-    
-    return false;
+    console.log(`✅ [${client.name}] Sent: ${label} (${response.data.messageSid || response.data.messageId || 'no id returned'})`);
+    return true;
   } catch (error) {
-    console.error('❌ Login failed:', error.message);
+    const msg = error.response ? JSON.stringify(error.response.data) : error.message;
+    console.log(`❌ [${client.name}] Error sending ${label}: ${msg}`);
     return false;
   }
 }
 
-/**
- * Step 2: Generate a single report
- */
-async function generateSingleReport(kind) {
+// ============================================================
+// Process one client fully: login → generate → send, for every
+// report due at this run time.
+// ============================================================
+async function processClient(client, reportsToGenerate) {
+  console.log(`\n--- ${client.name} ---`);
+
+  if (!client.email || !client.password || !client.whatsappNumber) {
+    console.log(`⚠️  [${client.name}] Skipped — missing credentials or WhatsApp number in secrets.`);
+    return { sent: 0, total: reportsToGenerate.length };
+  }
+
+  let token;
   try {
-    console.log(`📄 Generating report: ${kind}...`);
-    
-    const response = await axios.get(
-      `${CHIRO360_BASE_URL}/reports/daily/${kind}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${authToken}`
-        }
-      }
-    );
-
-    const apiData = response.data.data || response.data;
-    
-    if (apiData.pdf_base64) {
-      console.log(`✅ Generated ${kind}: ${apiData.filename}`);
-      return {
-        kind: kind,
-        filename: apiData.filename,
-        pdf_base64: apiData.pdf_base64
-      };
-    }
-    
-    return null;
+    console.log(`🔐 [${client.name}] Logging in...`);
+    token = await login(client);
+    console.log(`✅ [${client.name}] Logged in`);
   } catch (error) {
-    console.error(`❌ Failed to generate ${kind}: ${error.message}`);
-    return null;
-  }
-}
-
-/**
- * Step 3: Send report to webhook with base64
- */
-async function sendReportToWebhook(kind, title, pdfBase64) {
-  try {
-    console.log(`📱 Sending to WhatsApp: ${title}`);
-    
-    const payload = {
-      pdfBase64: pdfBase64,
-      recipientNumber: WHATSAPP_NUMBER,
-      reportName: title
-    };
-
-    const response = await axios.post(WEBHOOK_URL, payload, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      timeout: 60000
-    });
-
-    if (response.data.success) {
-      console.log(`✅ WhatsApp sent: ${title} (${response.data.messageSid})`);
-      return true;
-    } else {
-      console.error(`❌ WhatsApp send failed: ${response.data.error}`);
-      return false;
-    }
-  } catch (error) {
-    console.error(`❌ Error sending report: ${error.message}`);
-    return false;
-  }
-}
-
-/**
- * Main orchestration
- */
-async function main() {
-  console.log('🚀 Starting Chiro360 → WhatsApp Report Automation');
-  console.log(`⏰ Run Time: ${RUN_TIME.toUpperCase()}`);
-  console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-  console.log('---');
-
-  // Validate environment variables
-  if (!CHIRO360_EMAIL || !CHIRO360_PASSWORD || !WEBHOOK_URL || !WHATSAPP_NUMBER) {
-    console.error('❌ Missing environment variables');
-    process.exit(1);
+    console.log(`❌ [${client.name}] Login failed: ${error.message}`);
+    return { sent: 0, total: reportsToGenerate.length };
   }
 
-  // Get reports for this time with bi-weekly logic
-  const reportsConfig = getReportsForTime(RUN_TIME);
-  
-  console.log(`📋 Reports to generate for ${RUN_TIME}:`);
-  reportsConfig.forEach(r => console.log(`  - ${r.title} (${r.kind})`));
-  console.log('---');
-
-  // Step 1: Login
-  const loggedIn = await loginToChiro360();
-  if (!loggedIn) {
-    console.error('❌ Authentication failed. Aborting.');
-    process.exit(1);
-  }
-
-  // Step 2: Generate only the reports we need
-  console.log('---');
-  console.log('📊 Generating specific reports...');
-  
-  const generatedReports = [];
-  for (const reportConfig of reportsConfig) {
-    const report = await generateSingleReport(reportConfig.kind);
-    if (report) {
-      generatedReports.push({
-        ...report,
-        title: reportConfig.title
-      });
-    }
-    // Small delay between generations
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-
-  if (generatedReports.length === 0) {
-    console.error('❌ No reports generated. Aborting.');
-    process.exit(1);
-  }
-
-  // Step 3: Send to WhatsApp via webhook
-  console.log('---');
-  console.log('📤 Sending reports to WhatsApp...');
-  
   let sentCount = 0;
-  for (const report of generatedReports) {
-    const sent = await sendReportToWebhook(report.kind, report.title, report.pdf_base64);
-    if (sent) sentCount++;
-    // Delay between messages to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 1000));
+
+  for (const { kind, label } of reportsToGenerate) {
+    try {
+      console.log(`📄 [${client.name}] Generating: ${label}...`);
+      const report = await generateReport(client, token, kind);
+      console.log(`✅ [${client.name}] Generated: ${label}`);
+
+      const sent = await sendToWhatsApp(client, report, label);
+      if (sent) sentCount++;
+    } catch (error) {
+      console.log(`❌ [${client.name}] Error generating ${label}: ${error.message}`);
+    }
   }
 
-  console.log('---');
-  console.log(`✅ Complete: ${sentCount}/${generatedReports.length} ${RUN_TIME} reports sent`);
-  process.exit(0);
+  console.log(`--- ${client.name}: ${sentCount}/${reportsToGenerate.length} reports sent ---`);
+  return { sent: sentCount, total: reportsToGenerate.length };
 }
 
-// Run it
-main().catch(error => {
-  console.error('Fatal error:', error.message);
+// ============================================================
+// Main
+// ============================================================
+async function main() {
+  console.log('🤖 Starting Multi-Client Chiro360 → WhatsApp Report Automation');
+  console.log(`⏰ Run Time: ${RUN_TIME}`);
+  console.log(`🕐 Timestamp: ${new Date().toISOString()}`);
+
+  const reportsToGenerate = getReportsForTime(RUN_TIME);
+  console.log(`\n📋 Reports to generate for ${RUN_TIME}:`);
+  reportsToGenerate.forEach(r => console.log(`  - ${r.label} (${r.kind})`));
+
+  let totalSent = 0;
+  let totalExpected = 0;
+
+  for (const client of CLIENTS) {
+    const result = await processClient(client, reportsToGenerate);
+    totalSent += result.sent;
+    totalExpected += result.total;
+  }
+
+  console.log(`\n=== Overall: ${totalSent}/${totalExpected} reports sent across ${CLIENTS.length} client(s) ===`);
+}
+
+main().catch(err => {
+  console.error('Fatal error:', err);
   process.exit(1);
 });
