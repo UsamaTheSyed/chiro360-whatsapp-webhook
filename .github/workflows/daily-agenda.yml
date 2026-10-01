@@ -1,0 +1,41 @@
+name: Daily agenda
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 5am US Eastern in summer (EDT)
+    - cron: "0 10 * * *"  # 5am US Eastern in winter (EST)
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only continue at 5am Detroit time
+        id: gate
+        run: |
+          HOUR=$(TZ=America/Detroit date +%H)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$HOUR" = "05" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.go == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          node-version: 20
+      - run: npm install
+        if: steps.gate.outputs.go == 'true'
+      - run: npm install --no-save puppeteer
+        if: steps.gate.outputs.go == 'true'
+      - run: node generateAgenda.js
+        if: steps.gate.outputs.go == 'true'
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+      - run: node sendAgenda.js
+        if: steps.gate.outputs.go == 'true'
+        env:
+          RENDER_BASE_URL: ${{ secrets.RENDER_BASE_URL }}
+          AGENDA_UPLOAD_SECRET: ${{ secrets.AGENDA_UPLOAD_SECRET }}
