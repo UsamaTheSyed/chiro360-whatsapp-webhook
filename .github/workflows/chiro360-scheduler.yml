@@ -2,10 +2,10 @@ name: Chiro360 → WhatsApp Daily/Weekly Reports
 
 on:
   schedule:
-    - cron: '0 8 * * 1-5'   # 4am Eastern when on EDT (UTC-4)
-    - cron: '0 9 * * 1-5'   # 4am Eastern when on EST (UTC-5)
-    - cron: '0 21 * * 1-5'  # 5pm Eastern when on EDT (UTC-4)
-    - cron: '0 22 * * 1-5'  # 5pm Eastern when on EST (UTC-5)
+    - cron: '0 8 * * 1-5'    # 4am Eastern when on EDT (UTC-4)
+    - cron: '0 9 * * 1-5'    # 4am Eastern when on EST (UTC-5)
+    - cron: '30 22 * * 1-5'  # 6:30pm Eastern when on EDT (UTC-4)
+    - cron: '30 23 * * 1-5'  # 6:30pm Eastern when on EST (UTC-5)
 
   # Manual trigger
   workflow_dispatch:
@@ -39,14 +39,16 @@ jobs:
         id: schedule
         run: |
           # America/Detroit auto-adjusts for DST, so this is always
-          # the real current Eastern local hour, no manual updates needed.
-          LOCAL_HOUR=$(TZ='America/Detroit' date +%H)
-          echo "Current Eastern local hour: $LOCAL_HOUR"
+          # the real current Eastern local time, no manual updates needed.
+          LOCAL_TIME=$(TZ='America/Detroit' date +%H:%M)
+          echo "Current Eastern local time: $LOCAL_TIME"
 
-          if [ "$LOCAL_HOUR" = "04" ]; then
+          if [ "$LOCAL_TIME" = "04:00" ]; then
             echo "run_time=4am" >> $GITHUB_OUTPUT
             echo "should_run=true" >> $GITHUB_OUTPUT
-          elif [ "$LOCAL_HOUR" = "17" ]; then
+          elif [ "$LOCAL_TIME" = "18:30" ]; then
+            # Internal key stays "5pm" - it just selects the evening
+            # report set in scheduler.js, the actual send time is 6:30pm.
             echo "run_time=5pm" >> $GITHUB_OUTPUT
             echo "should_run=true" >> $GITHUB_OUTPUT
           else
