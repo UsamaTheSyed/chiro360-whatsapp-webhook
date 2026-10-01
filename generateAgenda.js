@@ -2,6 +2,17 @@ const fs = require("fs");
 const puppeteer = require("puppeteer");
 const { fetchTodaysEvents, TZ } = require("./fetchAgenda");
 
+const SAMPLE = process.env.SAMPLE === "1";
+
+const SAMPLE_EVENTS = [
+  {
+    summary: "Sample Patient 555-010-0100 DOL 01/01/26",
+    description: "New patient. Needs transportation.",
+    location: "123 Sample Street, Detroit, MI 48201",
+    start: { dateTime: new Date().toISOString() },
+  },
+];
+
 const esc = (s = "") =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -96,7 +107,7 @@ function buildHtml(items, dateLabel) {
 }
 
 (async () => {
-  const { events } = await fetchTodaysEvents();
+  const { events } = SAMPLE ? { events: SAMPLE_EVENTS } : await fetchTodaysEvents();
   const items = events.map(parseEvent);
 
   const dateLabel = new Date()
@@ -106,7 +117,11 @@ function buildHtml(items, dateLabel) {
   const browser = await puppeteer.launch({ args: ["--no-sandbox", "--disable-setuid-sandbox"] });
   const page = await browser.newPage();
   await page.setContent(buildHtml(items, dateLabel), { waitUntil: "load" });
-  await page.pdf({ path: "agenda.pdf", format: "A4", printBackground: true });
+  await page.pdf({
+    path: SAMPLE ? "sample-agenda.pdf" : "agenda.pdf",
+    format: "A4",
+    printBackground: true,
+  });
   await browser.close();
 
   console.log(`PDF created with ${items.length} appointment(s).`);
