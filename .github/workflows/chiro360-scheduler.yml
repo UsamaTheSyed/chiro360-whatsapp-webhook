@@ -1,13 +1,12 @@
 name: Chiro360 → WhatsApp Daily/Weekly Reports
 
 on:
-  # 4am Detroit time (Mon-Fri) = 8am UTC
   schedule:
-    - cron: '0 8 * * 1-5'
-    
-  # 5pm Detroit time (Mon-Fri) = 9pm UTC
-    - cron: '0 21 * * 1-5'
-  
+    - cron: '0 8 * * 1-5'   # 4am Eastern when on EDT (UTC-4)
+    - cron: '0 9 * * 1-5'   # 4am Eastern when on EST (UTC-5)
+    - cron: '0 21 * * 1-5'  # 5pm Eastern when on EDT (UTC-4)
+    - cron: '0 22 * * 1-5'  # 5pm Eastern when on EST (UTC-5)
+
   # Manual trigger
   workflow_dispatch:
     inputs:
@@ -24,29 +23,40 @@ on:
 jobs:
   send-reports:
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-      
+
       - name: Install dependencies
         run: npm install
-      
+
       - name: Determine run time (scheduled)
         id: schedule
         run: |
-          HOUR=$(date -u +%H)
-          if [ "$HOUR" = "08" ]; then
+          # America/Detroit auto-adjusts for DST, so this is always
+          # the real current Eastern local hour, no manual updates needed.
+          LOCAL_HOUR=$(TZ='America/Detroit' date +%H)
+          echo "Current Eastern local hour: $LOCAL_HOUR"
+
+          if [ "$LOCAL_HOUR" = "04" ]; then
             echo "run_time=4am" >> $GITHUB_OUTPUT
-          else
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          elif [ "$LOCAL_HOUR" = "17" ]; then
             echo "run_time=5pm" >> $GITHUB_OUTPUT
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            # One of the other 2 scheduled triggers firing on the "wrong"
+            # half of the year for current DST status - skip silently.
+            echo "should_run=false" >> $GITHUB_OUTPUT
           fi
-      
+
       - name: Run Chiro360 Report Automation
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           RUN_TIME: ${{ github.event.inputs.run_time || steps.schedule.outputs.run_time }}
