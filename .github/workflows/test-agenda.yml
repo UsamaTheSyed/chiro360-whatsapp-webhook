@@ -10,8 +10,14 @@ jobs:
         with:
           node-version: 20
       - run: npm install
-      - run: node fetchAgenda.js
+      - run: npm install --no-save puppeteer
+      - run: node generateAgenda.js
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agenda-pdf
+          path: agenda.pdf
+          retention-days: 1
