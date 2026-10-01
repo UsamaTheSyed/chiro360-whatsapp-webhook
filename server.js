@@ -1,5 +1,7 @@
 const express = require('express');
 const twilio = require('twilio');
+const path = require('path');          // NEW
+const crypto = require('crypto');      // NEW
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -7,6 +9,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Store PDFs in memory (cleared when server restarts)
 const storedPdfs = {};
+const agendaPdfs = {}; // NEW
 
 // Your Twilio credentials
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
@@ -94,6 +97,61 @@ app.get('/download-pdf/:pdfId', (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ---------- NEW: daily agenda ----------
+
+// Fake sample PDF, used only for WhatsApp template approval
+app.get('/agenda/sample.pdf', (req, res) => {
+  res.sendFile(path.join(__dirname, 'sample-agenda.pdf'));
+});
+
+// Temporary link that Twilio downloads the real agenda from
+app.get('/agenda/:pdfId.pdf', (req, res) => {
+  const pdf = agendaPdfs[req.params.pdfId];
+  if (!pdf) return res.status(404).send('Not found');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.send(pdf);
+});
+
+// Called by GitHub Actions at 5am. Needs the secret header.
+app.post('/send-agenda', async (req, res) => {
+  try {
+    const secret = process.env.AGENDA_UPLOAD_SECRET;
+    if (!secret || req.get('x-upload-secret') !== secret) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { pdfBase64, dateLabel } = req.body;
+    const to = process.env.AGENDA_WHATSAPP_TO;
+    const contentSid = process.env.TWILIO_AGENDA_CONTENT_SID;
+
+    if (!pdfBase64 || !dateLabel || !to || !contentSid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing pdfBase64, dateLabel, AGENDA_WHATSAPP_TO or TWILIO_AGENDA_CONTENT_SID'
+      });
+    }
+
+    const pdfId = crypto.randomBytes(24).toString('hex');
+    agendaPdfs[pdfId] = Buffer.from(pdfBase64, 'base64');
+    setTimeout(() => { delete agendaPdfs[pdfId]; }, 30 * 60 * 1000);
+
+    const message = await client.messages.create({
+      from: TWILIO_WHATSAPP_NUMBER,
+      to: to.startsWith('whatsapp:') ? to : `whatsapp:${to}`,
+      contentSid,
+      contentVariables: JSON.stringify({ 1: dateLabel, 2: pdfId })
+    });
+
+    console.log(`Agenda sent: ${message.sid}`);
+    res.json({ success: true, messageSid: message.sid });
+  } catch (error) {
+    console.error('Agenda error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ---------- end NEW ----------
 
 app.get('/health', (req, res) => {
   res.json({
