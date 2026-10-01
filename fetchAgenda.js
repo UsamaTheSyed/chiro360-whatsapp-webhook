@@ -17,12 +17,16 @@ function detroitToISO(dateStr, time) {
 
 async function fetchTodaysEvents() {
   const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  const auth = new google.auth.JWT(
-    creds.client_email,
-    null,
-    creds.private_key,
-    ["https://www.googleapis.com/auth/calendar.readonly"]
-  );
+  if (!creds.client_email || !creds.private_key) {
+    throw new Error(
+      "Secret JSON is missing client_email or private_key. Re-paste the full key file."
+    );
+  }
+  const auth = new google.auth.JWT({
+    email: creds.client_email,
+    key: creds.private_key,
+    scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
+  });
   const calendar = google.calendar({ version: "v3", auth });
 
   const date = todayInDetroit();
